@@ -3,21 +3,21 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# ---------- Config ----------
+# ---------------- Config ----------------
 DEFAULT_SYMBOL = "BTCUSDT"
 DEFAULT_INTERVAL = "1h"
-DEFAULT_WATCHLIST = ["BTCUSDT","ETHUSDT","XRPUSDT","XLMUSDT"]
+DEFAULT_WATCHLIST = ["XRPUSDT","XLMUSDT","ADAUSDT","BTCUSDT","ETHUSDT","LINKUSDT"]
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 USER_PREFS = {}
-SUBSCRIBERS_PATH = os.path.expanduser("~/bots/crypto/subscribers.json")
+SUBSCRIBERS_PATH = os.path.expanduser("~/bots/xrp111bot/subscribers.json")
 BOT_USERNAME = None
-BOT_VERSION = "1.4.1-stable"
+BOT_VERSION = "1.6.0-github-clean"
 
-# ---------- Token ----------
+# ---------------- Token ----------------
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN","")
 
-# ---------- Indicators ----------
+# ---------------- Indicators ----------------
 def ema(s, span): return s.ewm(span=span, adjust=False).mean()
 def rsi(s, period=14):
     d=s.diff(); g=(d.where(d>0,0)).rolling(period).mean(); l=(-d.where(d<0,0)).rolling(period).mean()
@@ -28,7 +28,7 @@ def true_range(h,l,c):
     pc=c.shift(1); return pd.concat([h-l,(h-pc).abs(),(l-pc).abs()],axis=1).max(axis=1)
 def atr(h,l,c,period=14): return true_range(h,l,c).rolling(period).mean()
 
-# ---------- Utils ----------
+# ---------------- Utils ----------------
 def normalize_symbol(s:str)->str:
     s=s.strip().upper()
     return s if s.endswith(("USDT","USDC","BUSD","USD","TRY","EUR")) else f"{s}USDT"
@@ -47,7 +47,7 @@ def _save_subscribers():
         with open(SUBSCRIBERS_PATH,"w") as f: json.dump(sorted(list(SUBSCRIBERS)), f)
     except Exception: pass
 
-# ---------- Data ----------
+# ---------------- Data ----------------
 def fetch_klines(symbol, interval, limit=400):
     r=requests.get(BINANCE_KLINES_URL, params={"symbol":symbol.upper(),"interval":interval,"limit":limit}, timeout=20)
     r.raise_for_status()
@@ -74,9 +74,9 @@ def compute_signal(symbol, interval):
     macd_h=float(last["macd_hist"]) if not math.isnan(last["macd_hist"]) else 0
     atr_v=float(last["atr14"]) if not math.isnan(last["atr14"]) else 0
 
-    long_bias = (price>ema20>ema50) and (rsi_v>50) and (macd_h>0)
-    short_bias = (price<ema20<ema50) and (rsi_v<50) and (macd_h<0)
-    side = "BUY" if long_bias else "SELL" if short_bias else "WAIT"
+    long_bias=(price>ema20>ema50) and (rsi_v>50) and (macd_h>0)
+    short_bias=(price<ema20<ema50) and (rsi_v<50) and (macd_h<0)
+    side="BUY" if long_bias else "SELL" if short_bias else "WAIT"
 
     stop=tp1=tp2=None
     if atr_v>0 and side in ("BUY","SELL"):
@@ -93,13 +93,14 @@ def compute_signal(symbol, interval):
         "tp2":None if tp2 is None else round(tp2,6)
     }
 
-# ---------- Commands ----------
+# ---------------- Commands ----------------
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
     USER_PREFS.setdefault(uid, {"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
     await update.message.reply_text(
-        "Use /set <SYMBOL> <INTERVAL>  (e.g. /set BTCUSDT 1h)\n"
-        "Use /watchlist BTC ETH XRP XLM  (or full pairs)\n"
+        "👋 Welcome to xrp111Bot\n"
+        "Use /set <SYMBOL> <INTERVAL> (e.g. /set BTCUSDT 1h)\n"
+        "Use /watchlist XRP BTC ETH ADA LINK SOL (or full pairs)\n"
         "Then /signal (one) or /watch (list)\n\nNFA."
     )
 
@@ -187,7 +188,7 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         if info["stop"] is not None: lines.append(f"Stop {info['stop']}")
         if info["tp1"]  is not None: lines.append(f"TP1/TP2 {info['tp1']}/{info['tp2']}")
-        lines.append("\nNFA.")
+        lines.append("NFA.")
         await update.message.reply_text("\n".join(lines), disable_web_page_preview=True)
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
@@ -203,7 +204,7 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE):
             out.append(f"• {info['symbol']}: {side} | Px {info['price']} | RSI {info['rsi14']} | MACD {info['macd_hist']} | ATR {info['atr14']}")
         except Exception as e:
             out.append(f"• {s}: error — {e}")
-    out.append("\nNFA.")
+    out.append("NFA.")
     await update.message.reply_text("\n".join(out), disable_web_page_preview=True)
 
 async def build_watchlist_summary(uid:int)->str:
@@ -216,7 +217,7 @@ async def build_watchlist_summary(uid:int)->str:
             out.append(f"• {info['symbol']}: {side} | Px {info['price']} | RSI {info['rsi14']} | MACD {info['macd_hist']} | ATR {info['atr14']}")
         except Exception as e:
             out.append(f"• {s}: error — {e}")
-    out.append("\nNFA.")
+    out.append("NFA.")
     return "\n".join(out)
 
 async def cmd_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -239,9 +240,9 @@ async def cmd_share(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not BOT_USERNAME:
         me=await context.bot.get_me(); BOT_USERNAME=me.username
     link=f"https://t.me/{BOT_USERNAME}"
-    await update.message.reply_text(summary + f"\n\nInvite a friend: {link}")
+    await update.message.reply_text(summary + f"\nInvite a friend: {link}")
 
-# ---------- Main ----------
+# ---------------- Main ----------------
 def main():
     if not BOT_TOKEN: raise RuntimeError("BOT_TOKEN not set")
     app=Application.builder().token(BOT_TOKEN).build()
