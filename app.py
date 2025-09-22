@@ -1,5 +1,6 @@
-import os, math, requests, pandas as pd, numpy as np
+import os, math, requests, pandas as pd, numpy as np, json, traceback
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -25,6 +26,7 @@ def atr(h,l,c,period=14): return true_range(h,l,c).rolling(period).mean()
 def normalize_symbol(s:str)->str:
     s=s.strip().upper()
     return s if s.endswith(("USDT","USDC","BUSD","USD","TRY","EUR")) else f"{s}USDT"
+
 def fetch_klines(symbol, interval, limit=400):
     r=requests.get(BINANCE_KLINES_URL, params={"symbol":symbol.upper(),"interval":interval,"limit":limit}, timeout=15)
     r.raise_for_status()
@@ -34,6 +36,7 @@ def fetch_klines(symbol, interval, limit=400):
     for col in ["open","high","low","close","volume"]: df[col]=df[col].astype(float)
     df["ts"]=pd.to_datetime(df["close_time"],unit="ms",utc=True)
     return df
+
 def compute_signal(symbol, interval):
     df=fetch_klines(symbol, interval)
     close,high,low=df["close"],df["high"],df["low"]
@@ -62,7 +65,7 @@ tg_app = Application.builder().token(BOT_TOKEN).build()
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
     USER_PREFS.setdefault(uid, {"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
-    await update.message.reply_text("xrp111Bot webhook is live. Use /set, /watchlist, /watch, /signal")
+    await update.message.reply_text("xrp111Bot webhook live. Use /set /watchlist /watch /signal")
 
 async def cmd_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id; args=context.args
@@ -102,7 +105,9 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s,i=prefs["symbol"],prefs["interval"]
     try:
         side,info=compute_signal(s,i)
-        lines=[f"{info['symbol']} [{i}]", f"Price {info['price']}", f"EMA20/50 {info['ema20']}/{info['ema50']}", f"RSI {info['rsi14']} | MACD {info['macd_hist']}", f"Signal: {side}"]
+        lines=[f"{info['symbol']} [{i}]", f"Price {info['price']}",
+               f"EMA20/50 {info['ema20']}/{info['ema50']}", f"RSI {info['rsi14']} | MACD {info['macd_hist']}",
+               f"Signal: {side}"]
         await update.message.reply_text("\n".join(lines), disable_web_page_preview=True)
     except Exception as e:
         await update.message.reply_text(f"Error: {e}")
@@ -115,13 +120,26 @@ tg_app.add_handler(CommandHandler("signal",cmd_signal))
 
 app = FastAPI()
 
+@app.on_event("startup")
+async def on_startup():
+    await tg_app.initialize()
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await tg_app.shutdown()
+
 @app.get("/")
 async def root():
     return {"ok": True, "msg": "xrp111bot webhook"}
 
 @app.post("/webhook/{secret}")
 async def webhook(secret: str, request: Request):
-    data = await request.json()
-    update = Update.de_json(data, tg_app.bot)
-    await tg_app.process_update(update)
-    return {"ok": True}
+    try:
+        data = await request.json()
+        update = Update.de_json(data, tg_app.bot)
+        await tg_app.process_update(update)
+        return {"ok": True}
+    except Exception as e:
+        print("WEBHOOK ERROR:", e)
+        traceback.print_exc()
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
