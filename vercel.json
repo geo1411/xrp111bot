@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "functions": {
+    "api/index.py": {
+      "runtime": "python3.11"
+    }
+  },
+  "routes": [
+    { "src": "/webhook/.*", "dest": "/api/index.py" },
+    { "src": "/", "dest": "/api/index.py" }
+  ]
+}

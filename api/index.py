@@ -2,23 +2,16 @@ import os, math, requests, pandas as pd, numpy as np
 from fastapi import FastAPI, Request
 from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
-
-# ----- Config -----
-DEFAULT_SYMBOL = "BTCUSDT"
+from telegram.ext import Application, CommandHandler, ContextTypesDEFAULT_SYMBOL = "BTCUSDT"
 DEFAULT_INTERVAL = "1h"
 DEFAULT_WATCHLIST = ["XRPUSDT","XLMUSDT","ADAUSDT","BTCUSDT","ETHUSDT","LINKUSDT"]
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 USER_PREFS = {}
-BOT_USERNAME = None
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN","")
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN not set")
-
-# ----- Indicators -----
-def ema(s, span): return s.ewm(span=span, adjust=False).mean()
+    raise RuntimeError("BOT_TOKEN not set")def ema(s, span): return s.ewm(span=span, adjust=False).mean()
 def rsi(s, period=14):
     d=s.diff(); g=(d.where(d>0,0)).rolling(period).mean(); l=(-d.where(d<0,0)).rolling(period).mean()
     rs=g/l.replace(0,np.nan); return (100-(100/(1+rs))).fillna(50)
@@ -71,61 +64,38 @@ def compute_signal(symbol, interval):
         "stop":None if stop is None else round(stop,6),
         "tp1":None if tp1 is None else round(tp1,6),
         "tp2":None if tp2 is None else round(tp2,6)
-    }
+    }tg_app = Application.builder().token(BOT_TOKEN).build()
 
-# ----- Handlers -----
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
     USER_PREFS.setdefault(uid, {"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
-    await update.message.reply_text(
-        "👋 Welcome to xrp111Bot (webhook)\n"
-        "Use /set <SYMBOL> <INTERVAL> (e.g. /set BTCUSDT 1h)\n"
-        "Use /watchlist XRP XLM ADA BTC ETH LINK\n"
-        "Then /signal or /watch\n\nNFA."
-    )
-async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "/set <SYMBOL> <INTERVAL>\n"
-        "/signal\n"
-        "/watchlist [SYMBOLS…]\n"
-        "/watch\n"
-        "/watchadd SYMBOLS…\n"
-        "/watchrm SYMBOLS…\n"
-        "/version"
-    )
-async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("xrp111Bot webhook build")
+    await update.message.reply_text("xrp111Bot webhook ready. Try /watchlist and /watch")
 
 async def cmd_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id; args=context.args
-    if len(args)<2:
-        await update.message.reply_text("Format: /set <SYMBOL> <INTERVAL>"); return
-    symbol=normalize_symbol(args[0]); interval=args[1]
+    if len(args)<2: return await update.message.reply_text("Format: /set <SYMBOL> <INTERVAL>")
     USER_PREFS.setdefault(uid,{})
-    USER_PREFS[uid]["symbol"]=symbol
-    USER_PREFS[uid]["interval"]=interval
+    USER_PREFS[uid]["symbol"]=normalize_symbol(args[0])
+    USER_PREFS[uid]["interval"]=args[1]
     USER_PREFS[uid].setdefault("watchlist",DEFAULT_WATCHLIST.copy())
-    await update.message.reply_text(f"✅ Set to {symbol} on {interval}")
+    await update.message.reply_text("✅ Updated. Use /signal or /watch.")
 
 async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id; args=context.args
     USER_PREFS.setdefault(uid, {"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
     if not args:
-        wl=USER_PREFS[uid].get("watchlist",DEFAULT_WATCHLIST)
-        await update.message.reply_text("📜 Watchlist: "+", ".join(wl)); return
-    symbols=[normalize_symbol(a) for a in args]
-    seen=set(); wl=[]
-    for s in symbols:
-        if s not in seen:
-            wl.append(s); seen.add(s)
-        if len(wl)>=20: break
+        return await update.message.reply_text("📜 Watchlist: "+", ".join(USER_PREFS[uid]["watchlist"]))
+    wl=[]; seen=set()
+    for a in args:
+        s=normalize_symbol(a)
+        if s not in seen and len(wl)<20: wl.append(s); seen.add(s)
     USER_PREFS[uid]["watchlist"]=wl
     await update.message.reply_text("✅ Watchlist set: "+", ".join(wl))
 
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
     prefs=USER_PREFS.get(uid, {"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
-    wl=prefs.get("watchlist",DEFAULT_WATCHLIST)[:20]; i=prefs.get("interval",DEFAULT_INTERVAL)
+    wl=prefs["watchlist"][:10]; i=prefs["interval"]
     out=[f"🧭 Watchlist [{i}]:"]
     for s in wl:
         try:
@@ -139,7 +109,7 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
     prefs=USER_PREFS.get(uid, {"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
-    s,i=prefs.get("symbol",DEFAULT_SYMBOL),prefs.get("interval",DEFAULT_INTERVAL)
+    s,i=prefs["symbol"],prefs["interval"]
     try:
         side,info=compute_signal(s,i)
         lines=[
@@ -156,26 +126,17 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
 
-# ----- PTB Application (no polling) -----
-tg_app = Application.builder().token(BOT_TOKEN).build()
 tg_app.add_handler(CommandHandler("start",cmd_start))
-tg_app.add_handler(CommandHandler("help",cmd_help))
-tg_app.add_handler(CommandHandler("version",cmd_version))
 tg_app.add_handler(CommandHandler("set",cmd_set))
 tg_app.add_handler(CommandHandler("watchlist",cmd_watchlist))
 tg_app.add_handler(CommandHandler("watch",cmd_watch))
-tg_app.add_handler(CommandHandler("signal",cmd_signal))
-
-# ----- FastAPI ASGI app for Vercel -----
-app = FastAPI()
+tg_app.add_handler(CommandHandler("signal",cmd_signal))app = FastAPI()
 
 @app.get("/")
-async def root():
-    return {"ok": True, "msg": "xrp111bot webhook"}
+async def root(): return {"ok": True, "msg": "xrp111bot webhook"}
 
 @app.post("/webhook/{secret}")
 async def webhook(secret: str, request: Request):
-    # (optionally check secret here)
     data = await request.json()
     update = Update.de_json(data, tg_app.bot)
     await tg_app.process_update(update)
