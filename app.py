@@ -25,7 +25,6 @@ def atr(h,l,c,period=14): return true_range(h,l,c).rolling(period).mean()
 def normalize_symbol(s:str)->str:
     s=s.strip().upper()
     return s if s.endswith(("USDT","USDC","BUSD","USD","TRY","EUR")) else f"{s}USDT"
-
 def fetch_klines(symbol, interval, limit=400):
     r=requests.get(BINANCE_KLINES_URL, params={"symbol":symbol.upper(),"interval":interval,"limit":limit}, timeout=15)
     r.raise_for_status()
@@ -35,7 +34,6 @@ def fetch_klines(symbol, interval, limit=400):
     for col in ["open","high","low","close","volume"]: df[col]=df[col].astype(float)
     df["ts"]=pd.to_datetime(df["close_time"],unit="ms",utc=True)
     return df
-
 def compute_signal(symbol, interval):
     df=fetch_klines(symbol, interval)
     close,high,low=df["close"],df["high"],df["low"]
@@ -45,7 +43,6 @@ def compute_signal(symbol, interval):
     df["atr14"]=atr(high,low,close,14)
     last=df.iloc[-1]
     price=float(last["close"])
-    import math
     ema20=float(last["ema20"]) if not math.isnan(last["ema20"]) else price
     ema50=float(last["ema50"]) if not math.isnan(last["ema50"]) else price
     rsi_v=float(last["rsi14"]) if not math.isnan(last["rsi14"]) else 50
@@ -54,18 +51,10 @@ def compute_signal(symbol, interval):
     long_bias=(price>ema20>ema50) and (rsi_v>50) and (macd_h>0)
     short_bias=(price<ema20<ema50) and (rsi_v<50) and (macd_h<0)
     side="BUY" if long_bias else "SELL" if short_bias else "WAIT"
-    stop=tp1=tp2=None
-    if atr_v>0 and side in ("BUY","SELL"):
-        if side=="BUY": stop=price-1.5*atr_v; tp1=price+1.0*atr_v; tp2=price+2.0*atr_v
-        else:           stop=price+1.5*atr_v; tp1=price-1.0*atr_v; tp2=price-2.0*atr_v
     return side,{
         "symbol":symbol.upper(),"interval":interval,"price":round(price,6),
         "ema20":round(ema20,6),"ema50":round(ema50,6),
-        "rsi14":round(rsi_v,2),"macd_hist":round(macd_h,6),
-        "atr14":round(atr_v,6),"ts": last["ts"].strftime("%Y-%m-%d %H:%M UTC"),
-        "stop":None if stop is None else round(stop,6),
-        "tp1":None if tp1 is None else round(tp1,6),
-        "tp2":None if tp2 is None else round(tp2,6)
+        "rsi14":round(rsi_v,2),"macd_hist":round(macd_h,6)
     }
 
 tg_app = Application.builder().token(BOT_TOKEN).build()
@@ -73,12 +62,11 @@ tg_app = Application.builder().token(BOT_TOKEN).build()
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
     USER_PREFS.setdefault(uid, {"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
-    await update.message.reply_text("xrp111Bot webhook ready. Use /set /watchlist /watch /signal")
+    await update.message.reply_text("xrp111Bot webhook is live. Use /set, /watchlist, /watch, /signal")
 
 async def cmd_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id; args=context.args
-    if len(args)<2:
-        return await update.message.reply_text("Format: /set <SYMBOL> <INTERVAL>")
+    if len(args)<2: return await update.message.reply_text("Format: /set <SYMBOL> <INTERVAL>")
     USER_PREFS.setdefault(uid,{})
     USER_PREFS[uid]["symbol"]=normalize_symbol(args[0]); USER_PREFS[uid]["interval"]=args[1]
     USER_PREFS[uid].setdefault("watchlist",DEFAULT_WATCHLIST.copy())
@@ -87,8 +75,7 @@ async def cmd_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id; args=context.args
     USER_PREFS.setdefault(uid, {"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
-    if not args:
-        return await update.message.reply_text("Watchlist: "+", ".join(USER_PREFS[uid]["watchlist"]))
+    if not args: return await update.message.reply_text("Watchlist: "+", ".join(USER_PREFS[uid]["watchlist"]))
     wl=[]; seen=set()
     for a in args:
         s=normalize_symbol(a)
@@ -104,7 +91,7 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for s in wl:
         try:
             side,info=compute_signal(s,i)
-            out.append(f"{info['symbol']}: {side} | Px {info['price']} | RSI {info['rsi14']} | MACD {info['macd_hist']} | ATR {info['atr14']}")
+            out.append(f"{info['symbol']}: {side} | Px {info['price']} | RSI {info['rsi14']} | MACD {info['macd_hist']}")
         except Exception as e:
             out.append(f"{s}: error — {e}")
     await update.message.reply_text("\n".join(out), disable_web_page_preview=True)
@@ -115,13 +102,7 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s,i=prefs["symbol"],prefs["interval"]
     try:
         side,info=compute_signal(s,i)
-        lines=[
-            f"{info['symbol']} [{i}] — {info['ts']}",
-            f"Px {info['price']}",
-            f"EMA20/50 {info['ema20']} / {info['ema50']}",
-            f"RSI {info['rsi14']} | MACD {info['macd_hist']} | ATR {info['atr14']}",
-            f"Signal: {side}"
-        ]
+        lines=[f"{info['symbol']} [{i}]", f"Price {info['price']}", f"EMA20/50 {info['ema20']}/{info['ema50']}", f"RSI {info['rsi14']} | MACD {info['macd_hist']}", f"Signal: {side}"]
         await update.message.reply_text("\n".join(lines), disable_web_page_preview=True)
     except Exception as e:
         await update.message.reply_text(f"Error: {e}")
