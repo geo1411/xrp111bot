@@ -127,8 +127,9 @@ async def on_startup(): await tg_app.initialize()
 @app.on_event("shutdown")
 async def on_shutdown(): await tg_app.shutdown()
 
-@app.get("/")
-async def root(): return {"ok":True,"msg":"xrp111bot webhook"}
+@app.get("/health")
+async def health(): return {"ok":True}
+
 @app.post("/webhook/{secret}")
 async def webhook(secret:str, request:Request):
     try:
