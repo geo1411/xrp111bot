@@ -1,18 +1,16 @@
-import os, math, requests, pandas as pd, numpy as np, json, traceback
+import os, math, requests, pandas as pd, numpy as np, traceback
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-DEFAULT_SYMBOL = "BTCUSDT"
-DEFAULT_INTERVAL = "1h"
-DEFAULT_WATCHLIST = ["XRPUSDT","XLMUSDT","ADAUSDT","BTCUSDT","ETHUSDT","LINKUSDT"]
-BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
-USER_PREFS = {}
-
-BOT_TOKEN = os.getenv("BOT_TOKEN","")
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN not set")
+DEFAULT_SYMBOL="BTCUSDT"
+DEFAULT_INTERVAL="1h"
+DEFAULT_WATCHLIST=["XRPUSDT","XLMUSDT","ADAUSDT","BTCUSDT","ETHUSDT","LINKUSDT"]
+BINANCE_KLINES_URL="https://api.binance.com/api/v3/klines"
+USER_PREFS={}
+BOT_TOKEN=os.getenv("BOT_TOKEN","")
+if not BOT_TOKEN: raise RuntimeError("BOT_TOKEN not set")
 
 def ema(s, span): return s.ewm(span=span, adjust=False).mean()
 def rsi(s, period=14):
@@ -20,9 +18,11 @@ def rsi(s, period=14):
     rs=g/l.replace(0,np.nan); return (100-(100/(1+rs))).fillna(50)
 def macd(s, fast=12, slow=26, signal=9):
     ef,es=ema(s,fast),ema(s,slow); m=ef-es; sig=ema(m,signal); return m,sig,m-sig
-def true_range(h,l,c):
-    pc=c.shift(1); return pd.concat([h-l,(h-pc).abs(),(l-pc).abs()],axis=1).max(axis=1)
-def atr(h,l,c,period=14): return true_range(h,l,c).rolling(period).mean()
+def atr(h,l,c,period=14):
+    pc=c.shift(1); import pandas as pd
+    tr=pd.concat([h-l,(h-pc).abs(),(l-pc).abs()],axis=1).max(axis=1)
+    return tr.rolling(period).mean()
+
 def normalize_symbol(s:str)->str:
     s=s.strip().upper()
     return s if s.endswith(("USDT","USDC","BUSD","USD","TRY","EUR")) else f"{s}USDT"
@@ -31,6 +31,7 @@ def fetch_klines(symbol, interval, limit=400):
     r=requests.get(BINANCE_KLINES_URL, params={"symbol":symbol.upper(),"interval":interval,"limit":limit}, timeout=15)
     r.raise_for_status()
     data=r.json()
+    import pandas as pd
     cols=["open_time","open","high","low","close","volume","close_time","quote","trades","tbb","tbq","ignore"]
     df=pd.DataFrame(data,columns=cols)
     for col in ["open","high","low","close","volume"]: df[col]=df[col].astype(float)
@@ -38,6 +39,7 @@ def fetch_klines(symbol, interval, limit=400):
     return df
 
 def compute_signal(symbol, interval):
+    import math
     df=fetch_klines(symbol, interval)
     close,high,low=df["close"],df["high"],df["low"]
     df["ema20"],df["ema50"]=ema(close,20),ema(close,50)
@@ -50,7 +52,6 @@ def compute_signal(symbol, interval):
     ema50=float(last["ema50"]) if not math.isnan(last["ema50"]) else price
     rsi_v=float(last["rsi14"]) if not math.isnan(last["rsi14"]) else 50
     macd_h=float(last["macd_hist"]) if not math.isnan(last["macd_hist"]) else 0
-    atr_v=float(last["atr14"]) if not math.isnan(last["atr14"]) else 0
     long_bias=(price>ema20>ema50) and (rsi_v>50) and (macd_h>0)
     short_bias=(price<ema20<ema50) and (rsi_v<50) and (macd_h<0)
     side="BUY" if long_bias else "SELL" if short_bias else "WAIT"
@@ -60,11 +61,11 @@ def compute_signal(symbol, interval):
         "rsi14":round(rsi_v,2),"macd_hist":round(macd_h,6)
     }
 
-tg_app = Application.builder().token(BOT_TOKEN).build()
+tg_app=Application.builder().token(BOT_TOKEN).build()
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
-    USER_PREFS.setdefault(uid, {"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
+    USER_PREFS.setdefault(uid,{"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
     await update.message.reply_text("xrp111Bot webhook live. Use /set /watchlist /watch /signal")
 
 async def cmd_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -77,7 +78,7 @@ async def cmd_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id; args=context.args
-    USER_PREFS.setdefault(uid, {"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
+    USER_PREFS.setdefault(uid,{"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
     if not args: return await update.message.reply_text("Watchlist: "+", ".join(USER_PREFS[uid]["watchlist"]))
     wl=[]; seen=set()
     for a in args:
@@ -88,7 +89,7 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
-    prefs=USER_PREFS.get(uid, {"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
+    prefs=USER_PREFS.get(uid,{"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
     i=prefs["interval"]; wl=prefs["watchlist"][:10]
     out=[f"Watchlist [{i}]:"]
     for s in wl:
@@ -101,12 +102,14 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
-    prefs=USER_PREFS.get(uid, {"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
+    prefs=USER_PREFS.get(uid,{"symbol":DEFAULT_SYMBOL,"interval":DEFAULT_INTERVAL,"watchlist":DEFAULT_WATCHLIST.copy()})
     s,i=prefs["symbol"],prefs["interval"]
     try:
         side,info=compute_signal(s,i)
-        lines=[f"{info['symbol']} [{i}]", f"Price {info['price']}",
-               f"EMA20/50 {info['ema20']}/{info['ema50']}", f"RSI {info['rsi14']} | MACD {info['macd_hist']}",
+        lines=[f"{info['symbol']} [{i}]",
+               f"Price {info['price']}",
+               f"EMA20/50 {info['ema20']}/{info['ema50']}",
+               f"RSI {info['rsi14']} | MACD {info['macd_hist']}",
                f"Signal: {side}"]
         await update.message.reply_text("\n".join(lines), disable_web_page_preview=True)
     except Exception as e:
@@ -118,28 +121,21 @@ tg_app.add_handler(CommandHandler("watchlist",cmd_watchlist))
 tg_app.add_handler(CommandHandler("watch",cmd_watch))
 tg_app.add_handler(CommandHandler("signal",cmd_signal))
 
-app = FastAPI()
-
+app=FastAPI()
 @app.on_event("startup")
-async def on_startup():
-    await tg_app.initialize()
-
+async def on_startup(): await tg_app.initialize()
 @app.on_event("shutdown")
-async def on_shutdown():
-    await tg_app.shutdown()
+async def on_shutdown(): await tg_app.shutdown()
 
 @app.get("/")
-async def root():
-    return {"ok": True, "msg": "xrp111bot webhook"}
-
+async def root(): return {"ok":True,"msg":"xrp111bot webhook"}
 @app.post("/webhook/{secret}")
-async def webhook(secret: str, request: Request):
+async def webhook(secret:str, request:Request):
     try:
-        data = await request.json()
-        update = Update.de_json(data, tg_app.bot)
+        data=await request.json()
+        update=Update.de_json(data, tg_app.bot)
         await tg_app.process_update(update)
-        return {"ok": True}
+        return {"ok":True}
     except Exception as e:
-        print("WEBHOOK ERROR:", e)
         traceback.print_exc()
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+        return JSONResponse({"ok":False,"error":str(e)}, status_code=500)
